@@ -31,7 +31,10 @@ typedef enum {
     ACK,             ///< empty message
     STOP,            ///< empty message
     TRANSFER,        ///< message with TransferOrder
-    BALANCE_HISTORY  ///< message with BalanceHistory
+    BALANCE_HISTORY, ///< message with BalanceHistory
+    CS_REQUEST,      ///< empty message
+    CS_REPLY,        ///< empty message
+    CS_RELEASE       ///< empty message
 } MessageType;
 
 typedef struct {

@@ -1,7 +1,5 @@
 #include "banking.h"
-#include "common.h"
-#include "pa23.h"
-#include "ipc.h"
+#include "pa2345.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
