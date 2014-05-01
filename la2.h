@@ -10,36 +10,44 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 #include <stdio.h>
 #include <fcntl.h>
 
 #define NUMBER_OF_PROCESS 2
 #define BUF_SIZE 100
-#define IPC_SUCCESS 0
-#define IPC_FAILURE -1
 #define WRITE 1
 #define READ 0
 
+enum {
+	IPC_SUCCESS = 0,
+	IPC_FAILURE = -1,
+	IPC_PIPE_IS_EMPTY = 1
+};
+
 typedef struct {
-    local_id localId;
     int total;
+    local_id localId;
+    balance_t initialBalance;
 } Process;
 
-int getNumberOfProcess( int argc, char * const argv[] );
+typedef enum { false, true } bool;
+
+bool getBranchesInitialBalance( const int, char** const, int*, balance_t* );
 void createFullyConnectedTopology( const int );
 void makePipeLog( const int );
-void makeChildren( const int );
+void createBranches( const int, const balance_t* const );
 
-void childProcess( const Process * const );
-void parentProcess( const Process * const );
+void accountService( const Process* const );
+void customerService( const Process* const );
 
-void closeUnusedPipes( const Process * const );
-void fillMessage( Message *, const MessageType, const local_id );
-void makeLogging( const char * const, const size_t );
-void receiveAll( void * self, const MessageType, const int );
-void closeOtherPipes( const Process * const );
+void closeUnusedPipes( const Process* const );
+void fillMessage( Message*, const MessageType, const local_id, const balance_t );
+void makeLogging( const char* const, const size_t );
+void receiveAll( void* self, const MessageType, const int );
+void closeOtherPipes( const Process* const );
 
-void waitForChildren();
+void waitForBranches();
 
 int Pipes[ MAX_PROCESS_ID + 1 ][ MAX_PROCESS_ID + 1][ 2 ];
 int EventsLog;

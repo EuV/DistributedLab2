@@ -36,31 +36,45 @@ int receive( void * self, local_id from, Message * msg ) {
 	// Read the header of the message (default size)
 	ssize_t wasRead = read( Pipes[ from ][ proc -> localId ][ READ ], &( msg -> s_header ), sizeof( MessageHeader ) );
 
+	// Actually, if ( wasRead == 0 ) there is no pipe at all (it was closed),
+	// but it doesn't matter for the caller function: it'll check the next outlet in any case
+	if ( ( wasRead == -1 && errno == EAGAIN ) || wasRead == 0 ) {
+		return IPC_PIPE_IS_EMPTY;
+	} else if( wasRead == -1) {
+		return IPC_FAILURE;
+	}
+
 	// Read the rest part of the message which size has been known from the header
 	wasRead += read( Pipes[ from ][ proc -> localId ][ READ ], &( msg -> s_payload ), msg -> s_header.s_payload_len );
 
-	// if( wasRead > 0 ) printf( "Receive %d bytes by %d proc from %d proc\n", wasRead, proc -> localId, from );
-
-	return ( wasRead > 0 ) ? IPC_SUCCESS : IPC_FAILURE;
+	//printf( "Receive %d bytes by %d proc from %d proc\n", wasRead, proc -> localId, from );
+	return IPC_SUCCESS;
 }
 
 
 int receive_any( void * self, Message * msg ) {
 
 	Process * proc = self;
+	static local_id sender = PARENT_ID;
+	int status;
 
-	static local_id sender = PARENT_ID + 1;
+	do {
+		if( sender == proc -> localId ) sender++;
 
-	if( sender == proc -> localId ) {
-		if( sender < proc -> total ) {
-			sender++;
-		} else {
-			sender = PARENT_ID + 1;
+		// printf( "receive_any by %d from %d\n", proc -> localId, sender );
+		status = receive( self, sender++, msg );
+
+		if( sender == proc -> localId ) sender++;
+
+		// i.e. it was the last try in the current cycle
+		if( sender > proc -> total ) {
+			sender = PARENT_ID;
+			if ( status == IPC_PIPE_IS_EMPTY ) {
+				sleep( 1 );
+			}
 		}
-	}
 
-	// printf( "receive_any by %d proc from %d proc\n", proc -> localId, sender );
-	int status = receive( self, sender++, msg );
-	if( sender > proc -> total ) sender = PARENT_ID + 1;
+	} while ( status == IPC_PIPE_IS_EMPTY );
+
 	return status;
 }
