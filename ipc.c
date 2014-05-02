@@ -70,7 +70,7 @@ int receive_any( void * self, Message * msg ) {
 		if( sender > proc -> total ) {
 			sender = PARENT_ID;
 			if ( status == IPC_PIPE_IS_EMPTY ) {
-				sleep( 1 );
+				//sleep( 1 );
 			}
 		}
 

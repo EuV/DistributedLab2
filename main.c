@@ -28,7 +28,7 @@ int main( int argc, char* argv[] ) {
 	return 0;
 }
 
-
+void accountMainLoop( const Process * const );
 void accountService( const Process * const proc ) {
 
 	closeUnusedPipes( proc );
@@ -48,6 +48,10 @@ void accountService( const Process * const proc ) {
 		exit( 1 );
 	}
 
+
+	accountMainLoop( proc );
+
+
 	// Receive STARTED
 	receiveAll( ( void* )proc, STARTED, proc -> total - 1 );
 	sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
@@ -55,7 +59,7 @@ void accountService( const Process * const proc ) {
 
 
 
-	/*
+
 	// DONE
 	Message doneMsg;
 	fillMessage( &doneMsg, DONE, proc -> localId, proc -> initialBalance );
@@ -67,10 +71,41 @@ void accountService( const Process * const proc ) {
 
 	// Receive DONE
 	receiveAll( ( void* )proc, DONE, proc -> total - 1 );
-	sprintf( LogBuf, log_received_all_done_fmt, proc -> localId );
-	makeLogging( LogBuf, strlen( LogBuf ) );*/
+	sprintf( LogBuf, log_received_all_done_fmt, get_physical_time(), proc -> localId );
+	makeLogging( LogBuf, strlen( LogBuf ) );
 
 	closeOtherPipes( proc );
+}
+
+void accountMainLoop( const Process * const proc ) {
+
+	int done = 0;
+	while ( done < 4 ) {
+		Message msg;
+		receive_any( ( void* )proc, &msg );
+
+		switch ( msg.s_header.s_type ) {
+			case STARTED: {
+				static int started = 0;
+				started++;
+
+			}
+			case TRANSFER: {
+			}
+			case STOP:{
+			}
+			case DONE: {
+				++done;
+				break;
+			}
+			default:
+				fprintf(stderr, "Unexpected message of type: %d\n",
+				msg.s_header.s_type);
+				break;
+		}
+	}
+
+
 }
 
 
@@ -81,13 +116,13 @@ void customerService( const Process * const proc ) {
 	// Receive STARTED
 	receiveAll( ( void* )proc, STARTED, proc -> total );
 	sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
-	makeLogging( LogBuf, strlen( LogBuf ) );
+	// makeLogging( LogBuf, strlen( LogBuf ) );
 
-	/*
+
 	// Receive DONE
 	receiveAll( ( void* )proc, DONE, proc -> total );
 	sprintf( LogBuf, log_received_all_done_fmt, proc -> localId );
-	makeLogging( LogBuf, strlen( LogBuf ) );*/
+	// makeLogging( LogBuf, strlen( LogBuf ) );
 
 	waitForBranches();
 
@@ -172,7 +207,7 @@ void fillMessage( Message * msg, const MessageType msgType, const local_id id, c
 			sprintf( msg -> s_payload, log_started_fmt, get_physical_time(), id, getpid(), getppid(), initialBalance );
 			break;
 		case DONE:
-			sprintf( msg -> s_payload, log_done_fmt, id );
+			sprintf( msg -> s_payload, log_done_fmt, get_physical_time(), id, initialBalance );
 			break;
 		default:
 			sprintf( msg -> s_payload, "Unsupported type of message\n" );
