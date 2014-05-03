@@ -48,7 +48,7 @@ void accountService( Process * const proc ) {
 				break;
 			}
 			case TRANSFER: {
-				fastForwardHistory( proc, msg.s_header.s_local_time );
+				fastForwardHistory( proc, msg.s_header.s_local_time + 1 );
 
 				TransferOrder order;
 				memcpy( &order, msg.s_payload, msg.s_header.s_payload_len );
@@ -73,7 +73,7 @@ void accountService( Process * const proc ) {
 
 				makeIPCLog( LogBuf );
 
-				BalanceState state = { proc -> balance, msg.s_header.s_local_time, 0 };
+				BalanceState state = { proc -> balance, msg.s_header.s_local_time + 1, 0 };
 				proc -> history.s_history[ proc -> history.s_history_len++ ] = state;
 				break;
 			}
@@ -85,7 +85,7 @@ void accountService( Process * const proc ) {
 				makeIPCLog( doneMsg.s_payload );
 				send_multicast( proc, &doneMsg );
 
-				fastForwardHistory( proc, msg.s_header.s_local_time );
+				fastForwardHistory( proc, msg.s_header.s_local_time + 1 );
 				break;
 			}
 			case DONE: {
@@ -218,6 +218,7 @@ void createFullyConnectedTopology( const int procTotal ) {
 			if ( row == col ) continue;
 			pipe( Pipes[ row ][ col ] );
 			fcntl( Pipes[ row ][ col ][ READ ], F_SETFL, O_NONBLOCK );
+			fcntl( Pipes[ row ][ col ][ WRITE ], F_SETFL, O_NONBLOCK );
 		}
 	}
 }
