@@ -1,9 +1,8 @@
 #include "la2.h"
 
-void transfer( void* parent_data, local_id src, local_id dst,  balance_t amount ) {
-	// student, please implement me
-}
-
+//
+// TODO: printf -> stderr (fprintf)
+//
 
 int main( int argc, char* argv[] ) {
 
@@ -22,111 +21,188 @@ int main( int argc, char* argv[] ) {
 
 	createBranches( procTotal, balance );
 
-	//bank_robbery(parent_data);
-	//print_history(all);
-
 	return 0;
 }
 
-void accountMainLoop( const Process * const );
-void accountService( const Process * const proc ) {
+
+void accountService( Process * const proc ) {
 
 	closeUnusedPipes( proc );
 
 	// STARTED
 	Message startedMsg;
-	sprintf( startedMsg.s_payload, log_started_fmt, get_physical_time(), proc -> localId, getpid(), getppid(), proc -> initialBalance );
-	startedMsg.s_header.s_type = STARTED;
-	startedMsg.s_header.s_magic = MESSAGE_MAGIC;
-	startedMsg.s_header.s_local_time = get_physical_time();
-	startedMsg.s_header.s_payload_len = strlen( startedMsg.s_payload );
+	fillMessage( &startedMsg, proc, STARTED );
+	makeLogging( startedMsg.s_payload );
+	send_multicast( proc, &startedMsg );
 
-	makeLogging( startedMsg.s_payload, startedMsg.s_header.s_payload_len );
+	// Receive all the messages
+	int done = 0;
+	while( done != proc -> total ) {
+		Message msg;
+		receive_any( proc, &msg );
 
-	if ( send_multicast( ( void* )proc, &startedMsg ) == IPC_FAILURE ) {
-		printf( "Multicast error in Process %d\n", proc -> localId );
-		exit( 1 );
+		switch ( msg.s_header.s_type ) {
+			case STARTED: {
+				static int started = 1;
+				started++;
+				if( started == proc -> total ) {
+					sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
+					makeLogging( LogBuf );
+				}
+				break;
+			}
+			case TRANSFER: {
+				fastForwardHistory( proc, msg.s_header.s_local_time );
+
+				TransferOrder order;
+				memcpy( &order, msg.s_payload, msg.s_header.s_payload_len );
+
+				// From (this) account
+				if( order.s_src == proc -> localId ) {
+					sprintf( LogBuf, log_transfer_out_fmt, get_physical_time(), proc -> localId, order.s_amount, order.s_dst );
+					proc -> balance -= order.s_amount;
+					send( proc, order.s_dst, &msg );
+				}
+
+				// To (this) account
+				else {
+					sprintf( LogBuf, log_transfer_in_fmt, get_physical_time(), proc -> localId, order.s_amount, order.s_src );
+					proc -> balance += order.s_amount;
+
+					// Acknowledgement to the customer-process
+					Message ackMsg;
+					fillMessage( &ackMsg, proc, ACK );
+					send( proc, PARENT_ID, &ackMsg );
+				}
+
+				makeLogging( LogBuf );
+
+				BalanceState state = { proc -> balance, msg.s_header.s_local_time, 0 };
+				proc -> history.s_history[ proc -> history.s_history_len++ ] = state;
+				break;
+			}
+			case STOP: {
+				done++; // This one
+
+				Message doneMsg;
+				fillMessage( &doneMsg, proc, DONE );
+				makeLogging( doneMsg.s_payload );
+				send_multicast( proc, &doneMsg );
+
+				fastForwardHistory( proc, msg.s_header.s_local_time );
+				break;
+			}
+			case DONE: {
+				done++;
+				break;
+			}
+			default: {
+				fprintf(stderr, "Unexpected message of type: %d\n", msg.s_header.s_type);
+				break;
+			}
+		}
 	}
 
-
-	accountMainLoop( proc );
-
-
-	// Receive STARTED
-	receiveAll( ( void* )proc, STARTED, proc -> total - 1 );
-	sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
-	makeLogging( LogBuf, strlen( LogBuf ) );
-
-
-
-
-	// DONE
-	Message doneMsg;
-	fillMessage( &doneMsg, DONE, proc -> localId, proc -> initialBalance );
-	makeLogging( doneMsg.s_payload, doneMsg.s_header.s_payload_len );
-	if ( send_multicast( ( void* )proc, &doneMsg ) == IPC_FAILURE ) {
-		printf( "Multicast error in Process %d\n", proc -> localId );
-		exit( 1 );
-	}
-
-	// Receive DONE
-	receiveAll( ( void* )proc, DONE, proc -> total - 1 );
 	sprintf( LogBuf, log_received_all_done_fmt, get_physical_time(), proc -> localId );
-	makeLogging( LogBuf, strlen( LogBuf ) );
+	makeLogging( LogBuf );
+
+	Message historyMsg;
+	historyMsg.s_header.s_payload_len = 2 + sizeof( BalanceState ) * proc -> history.s_history_len;
+	memcpy( historyMsg.s_payload, &( proc -> history ), historyMsg.s_header.s_payload_len );
+	historyMsg.s_header.s_type = BALANCE_HISTORY;
+	historyMsg.s_header.s_magic = MESSAGE_MAGIC;
+	historyMsg.s_header.s_local_time = get_physical_time();
+	send( proc, PARENT_ID, &historyMsg );
 
 	closeOtherPipes( proc );
 }
 
-void accountMainLoop( const Process * const proc ) {
+void fastForwardHistory( Process * const proc, const int newPresent ) {
+	if( proc -> history.s_history_len >= newPresent ) return;
+	while( proc -> history.s_history_len != newPresent ) {
+		BalanceState state = { proc -> balance, proc -> history.s_history_len, 0 };
+		proc -> history.s_history[ proc -> history.s_history_len++ ] = state;
+	}
+}
 
-	int done = 0;
-	while ( done < 4 ) {
+
+void transfer( void* parent_data, local_id src, local_id dst,  balance_t amount ) {
+	TransferOrder order = { src, dst, amount };
+	Message transferMsg;
+	memcpy( transferMsg.s_payload, &order, sizeof( TransferOrder ) );
+	fillMessage( &transferMsg, parent_data, TRANSFER );
+	send( parent_data, src, &transferMsg );
+
+	Message msg;
+	while( receive( parent_data, dst, &msg ) == IPC_PIPE_IS_EMPTY ) {
+		// sleep( 1 );
+	}
+
+	if( msg.s_header.s_type != ACK ) {
+		printf( "ACK is missing! Received %d instead of %d\n", msg.s_header.s_type, ACK );
+		exit( 1 );
+	}
+}
+
+
+void customerService( Process * const proc ) {
+
+	closeUnusedPipes( proc );
+
+	customerMainLoop( proc );
+
+	waitForBranches();
+
+	closeOtherPipes( proc );
+}
+
+
+void customerMainLoop( Process * const proc ) {
+	AllHistory AH = { 0 };
+
+	while( AH.s_history_len != proc -> total ) {
+
 		Message msg;
-		receive_any( ( void* )proc, &msg );
+		receive_any( proc, &msg );
 
 		switch ( msg.s_header.s_type ) {
 			case STARTED: {
 				static int started = 0;
 				started++;
+				if( started == proc -> total ) {
+					sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
+					makeLogging( LogBuf );
 
-			}
-			case TRANSFER: {
-			}
-			case STOP:{
+					bank_robbery( proc, proc -> total );
+
+					Message stopMsg;
+					fillMessage( &stopMsg, proc, STOP );
+					send_multicast( proc, &stopMsg );
+				}
+				break;
 			}
 			case DONE: {
-				++done;
+				static int done = 0;
+				done++;
+				if( done == proc -> total ) {
+					sprintf( LogBuf, log_received_all_done_fmt, get_physical_time(), proc -> localId );
+					makeLogging( LogBuf );
+				}
+				break;
+			}
+			case BALANCE_HISTORY: {
+				BalanceHistory history;
+				memcpy( &history, msg.s_payload, msg.s_header.s_payload_len );
+				AH.s_history[ AH.s_history_len++ ] = history;
 				break;
 			}
 			default:
-				fprintf(stderr, "Unexpected message of type: %d\n",
-				msg.s_header.s_type);
+				fprintf(stderr, "Unexpected message of type: %d\n", msg.s_header.s_type);
 				break;
 		}
 	}
 
-
-}
-
-
-void customerService( const Process * const proc ) {
-
-	closeUnusedPipes( proc );
-
-	// Receive STARTED
-	receiveAll( ( void* )proc, STARTED, proc -> total );
-	sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
-	// makeLogging( LogBuf, strlen( LogBuf ) );
-
-
-	// Receive DONE
-	receiveAll( ( void* )proc, DONE, proc -> total );
-	sprintf( LogBuf, log_received_all_done_fmt, proc -> localId );
-	// makeLogging( LogBuf, strlen( LogBuf ) );
-
-	waitForBranches();
-
-	closeOtherPipes( proc );
+	print_history( &AH );
 }
 
 // ================================================================================================
@@ -171,7 +247,7 @@ void makePipeLog( const int procTotal ) {
 
 void createBranches( const int procTotal, const balance_t* const balance ) {
 	for ( int i = 1; i <= procTotal; i++ ) {
-		Process process = { procTotal, PARENT_ID, balance[ i - 1 ] };
+		Process process = { procTotal, PARENT_ID, balance[ i - 1 ], { i, 0 } };
 		if ( fork() == 0 ) {
 			process.localId = i;
 			accountService( &process );
@@ -201,13 +277,17 @@ void closeUnusedPipes( const Process * const proc ) {
 }
 
 
-void fillMessage( Message * msg, const MessageType msgType, const local_id id, const balance_t initialBalance ) {
+void fillMessage( Message * msg, const Process * const proc, const MessageType msgType ) {
 	switch( msgType ) {
 		case STARTED:
-			sprintf( msg -> s_payload, log_started_fmt, get_physical_time(), id, getpid(), getppid(), initialBalance );
+			sprintf( msg -> s_payload, log_started_fmt, get_physical_time(), proc -> localId, getpid(), getppid(), proc -> balance );
+			break;
+		case ACK:
+		case STOP:
+		case TRANSFER:
 			break;
 		case DONE:
-			sprintf( msg -> s_payload, log_done_fmt, get_physical_time(), id, initialBalance );
+			sprintf( msg -> s_payload, log_done_fmt, get_physical_time(), proc -> localId, proc -> balance );
 			break;
 		default:
 			sprintf( msg -> s_payload, "Unsupported type of message\n" );
@@ -215,28 +295,14 @@ void fillMessage( Message * msg, const MessageType msgType, const local_id id, c
 	}
 	msg -> s_header.s_type = msgType;
 	msg -> s_header.s_magic = MESSAGE_MAGIC;
+	msg -> s_header.s_local_time = get_physical_time();
 	msg -> s_header.s_payload_len = strlen( msg -> s_payload );
 }
 
 
-void makeLogging( const char * const buf, const size_t count ) {
-	write( STDOUT_FILENO, buf, count );
-	write( EventsLog, buf, count );
-}
-
-
-void receiveAll( void* self, const MessageType msgType, const int expectedNumber ) {
-	Message incomingMsg;
-	int counter = 0;
-	while ( counter != expectedNumber ) {
-		int result = receive_any( self, &incomingMsg );
-		if( result == IPC_SUCCESS && incomingMsg.s_header.s_type == msgType ) {
-			counter++;
-		} else {
-			printf( "Receive error in Process %d\n", getpid() );
-			exit( 1 );
-		}
-	}
+void makeLogging( const char * const buf ) {
+	write( STDOUT_FILENO, buf, strlen( buf ) );
+	write( EventsLog, buf, strlen( buf ) );
 }
 
 

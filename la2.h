@@ -26,7 +26,8 @@ enum {
 typedef struct {
     int total;
     local_id localId;
-    balance_t initialBalance;
+    balance_t balance;
+    BalanceHistory history;
 } Process;
 
 typedef enum { false, true } bool;
@@ -36,13 +37,14 @@ void createFullyConnectedTopology( const int );
 void makePipeLog( const int );
 void createBranches( const int, const balance_t* const );
 
-void accountService( const Process* const );
-void customerService( const Process* const );
+void accountService( Process* const );
+void customerService( Process* const );
+void customerMainLoop( Process * const );
+void fastForwardHistory( Process * const, const int );
 
 void closeUnusedPipes( const Process* const );
-void fillMessage( Message*, const MessageType, const local_id, const balance_t );
-void makeLogging( const char* const, const size_t );
-void receiveAll( void* self, const MessageType, const int );
+void fillMessage( Message*, const Process* const, const MessageType );
+void makeLogging( const char* const );
 void closeOtherPipes( const Process* const );
 
 void waitForBranches();
