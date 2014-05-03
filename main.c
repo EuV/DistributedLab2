@@ -1,9 +1,5 @@
 #include "la2.h"
 
-//
-// TODO: printf -> stderr (fprintf)
-//
-
 int main( int argc, char* argv[] ) {
 
 	EventsLog = open( evengs_log, O_CREAT | O_TRUNC | O_WRONLY | O_APPEND, 0777 );
@@ -32,7 +28,7 @@ void accountService( Process * const proc ) {
 	// STARTED
 	Message startedMsg;
 	fillMessage( &startedMsg, proc, STARTED );
-	makeLogging( startedMsg.s_payload );
+	makeIPCLog( startedMsg.s_payload );
 	send_multicast( proc, &startedMsg );
 
 	// Receive all the messages
@@ -47,7 +43,7 @@ void accountService( Process * const proc ) {
 				started++;
 				if( started == proc -> total ) {
 					sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
-					makeLogging( LogBuf );
+					makeIPCLog( LogBuf );
 				}
 				break;
 			}
@@ -75,7 +71,7 @@ void accountService( Process * const proc ) {
 					send( proc, PARENT_ID, &ackMsg );
 				}
 
-				makeLogging( LogBuf );
+				makeIPCLog( LogBuf );
 
 				BalanceState state = { proc -> balance, msg.s_header.s_local_time, 0 };
 				proc -> history.s_history[ proc -> history.s_history_len++ ] = state;
@@ -86,25 +82,25 @@ void accountService( Process * const proc ) {
 
 				Message doneMsg;
 				fillMessage( &doneMsg, proc, DONE );
-				makeLogging( doneMsg.s_payload );
+				makeIPCLog( doneMsg.s_payload );
 				send_multicast( proc, &doneMsg );
 
 				fastForwardHistory( proc, msg.s_header.s_local_time );
 				break;
 			}
 			case DONE: {
-				done++;
+				done++; // The others
 				break;
 			}
 			default: {
-				fprintf(stderr, "Unexpected message of type: %d\n", msg.s_header.s_type);
+				fprintf( stderr, "Unexpected message of type: %d\n", msg.s_header.s_type );
 				break;
 			}
 		}
 	}
 
 	sprintf( LogBuf, log_received_all_done_fmt, get_physical_time(), proc -> localId );
-	makeLogging( LogBuf );
+	makeIPCLog( LogBuf );
 
 	Message historyMsg;
 	historyMsg.s_header.s_payload_len = 2 + sizeof( BalanceState ) * proc -> history.s_history_len;
@@ -114,8 +110,9 @@ void accountService( Process * const proc ) {
 	historyMsg.s_header.s_local_time = get_physical_time();
 	send( proc, PARENT_ID, &historyMsg );
 
-	closeOtherPipes( proc );
+	closeTheOtherPipes( proc );
 }
+
 
 void fastForwardHistory( Process * const proc, const int newPresent ) {
 	if( proc -> history.s_history_len >= newPresent ) return;
@@ -126,41 +123,13 @@ void fastForwardHistory( Process * const proc, const int newPresent ) {
 }
 
 
-void transfer( void* parent_data, local_id src, local_id dst,  balance_t amount ) {
-	TransferOrder order = { src, dst, amount };
-	Message transferMsg;
-	memcpy( transferMsg.s_payload, &order, sizeof( TransferOrder ) );
-	fillMessage( &transferMsg, parent_data, TRANSFER );
-	send( parent_data, src, &transferMsg );
-
-	Message msg;
-	while( receive( parent_data, dst, &msg ) == IPC_PIPE_IS_EMPTY ) {
-		// sleep( 1 );
-	}
-
-	if( msg.s_header.s_type != ACK ) {
-		printf( "ACK is missing! Received %d instead of %d\n", msg.s_header.s_type, ACK );
-		exit( 1 );
-	}
-}
-
-
 void customerService( Process * const proc ) {
 
 	closeUnusedPipes( proc );
 
-	customerMainLoop( proc );
+	AllHistory allHistory = { 0 };
 
-	waitForBranches();
-
-	closeOtherPipes( proc );
-}
-
-
-void customerMainLoop( Process * const proc ) {
-	AllHistory AH = { 0 };
-
-	while( AH.s_history_len != proc -> total ) {
+	while( allHistory.s_history_len != proc -> total ) {
 
 		Message msg;
 		receive_any( proc, &msg );
@@ -171,7 +140,7 @@ void customerMainLoop( Process * const proc ) {
 				started++;
 				if( started == proc -> total ) {
 					sprintf( LogBuf, log_received_all_started_fmt, get_physical_time(), proc -> localId );
-					makeLogging( LogBuf );
+					makeIPCLog( LogBuf );
 
 					bank_robbery( proc, proc -> total );
 
@@ -186,26 +155,47 @@ void customerMainLoop( Process * const proc ) {
 				done++;
 				if( done == proc -> total ) {
 					sprintf( LogBuf, log_received_all_done_fmt, get_physical_time(), proc -> localId );
-					makeLogging( LogBuf );
+					makeIPCLog( LogBuf );
 				}
 				break;
 			}
 			case BALANCE_HISTORY: {
 				BalanceHistory history;
 				memcpy( &history, msg.s_payload, msg.s_header.s_payload_len );
-				AH.s_history[ AH.s_history_len++ ] = history;
+				allHistory.s_history[ allHistory.s_history_len++ ] = history;
 				break;
 			}
-			default:
-				fprintf(stderr, "Unexpected message of type: %d\n", msg.s_header.s_type);
+			default: {
+				fprintf( stderr, "Unexpected message of type: %d\n", msg.s_header.s_type );
 				break;
+			}
 		}
 	}
 
-	print_history( &AH );
+	print_history( &allHistory );
+
+	waitForBranches();
+
+	closeTheOtherPipes( proc );
 }
 
-// ================================================================================================
+
+void transfer( void* parent_data, local_id src, local_id dst,  balance_t amount ) {
+	TransferOrder order = { src, dst, amount };
+	Message transferMsg;
+	memcpy( transferMsg.s_payload, &order, sizeof( TransferOrder ) );
+	fillMessage( &transferMsg, parent_data, TRANSFER );
+	send( parent_data, src, &transferMsg );
+
+	Message msg;
+	while( receive( parent_data, dst, &msg ) == IPC_PIPE_IS_EMPTY ) {}
+
+	if( msg.s_header.s_type != ACK ) {
+		fprintf( stderr, "ACK is missing! Received %d instead of %d\n", msg.s_header.s_type, ACK );
+		exit( 1 );
+	}
+}
+
 
 bool getBranchesInitialBalance( const int argc, char** const argv, int* procTotal, balance_t* balance ) {
 
@@ -233,14 +223,28 @@ void createFullyConnectedTopology( const int procTotal ) {
 }
 
 
-void makePipeLog( const int procTotal ) {
-	char buf[ 10 ];
-	for ( int row = 0; row <= procTotal; row++ ) {
-		for ( int col = 0; col <= procTotal; col++ ) {
-			sprintf( buf, "| %3d %3d ", Pipes[ row ][ col ][ READ ], Pipes[ row ][ col ][ WRITE ] );
-			write( PipesLog, buf, strlen( buf ) );
+void closeUnusedPipes( const Process * const proc ) {
+	for ( int row = PARENT_ID; row <= proc -> total; row++ ) {
+		for ( int col = PARENT_ID; col <= proc -> total; col++ ) {
+			if ( row == col ) continue;
+			if ( row == proc -> localId ) {
+				close( Pipes[ row ][ col ][ READ ] );
+			} else {
+				close( Pipes[ row ][ col ][ WRITE ] );
+				if ( col != proc -> localId ) {
+					close( Pipes[ row ][ col ][ READ ] );
+				}
+			}
 		}
-		write( PipesLog, "|\n", 2 );
+	}
+}
+
+
+void closeTheOtherPipes( const Process * const proc ) {
+	for ( int rowOrCol = PARENT_ID; rowOrCol <= proc -> total; rowOrCol++ ) {
+		if ( rowOrCol == proc -> localId ) continue;
+		close( Pipes[ proc -> localId ][ rowOrCol ][ WRITE ] );
+		close( Pipes[ rowOrCol ][ proc -> localId ][ READ ] );
 	}
 }
 
@@ -258,21 +262,13 @@ void createBranches( const int procTotal, const balance_t* const balance ) {
 	}
 }
 
-// ================================================================================================
 
-void closeUnusedPipes( const Process * const proc ) {
-	for ( int row = PARENT_ID; row <= proc -> total; row++ ) {
-		for ( int col = PARENT_ID; col <= proc -> total; col++ ) {
-			if ( row == col ) continue;
-			if ( row == proc -> localId ) {
-				close( Pipes[ row ][ col ][ READ ] );
-			} else {
-				close( Pipes[ row ][ col ][ WRITE ] );
-				if ( col != proc -> localId ) {
-					close( Pipes[ row ][ col ][ READ ] );
-				}
-			}
-		}
+void waitForBranches() {
+	int status;
+	pid_t pid;
+	while ( ( pid = wait( &status ) ) != -1 ) {
+		// printf( "Process %d has been done with exit code %d\n", pid, status );
+		if( WIFSIGNALED( status ) ) fprintf( stderr, "!!! Interrupted by signal %d !!!\n", WTERMSIG( status ) );
 	}
 }
 
@@ -300,27 +296,19 @@ void fillMessage( Message * msg, const Process * const proc, const MessageType m
 }
 
 
-void makeLogging( const char * const buf ) {
+void makePipeLog( const int procTotal ) {
+	char buf[ 10 ];
+	for ( int row = 0; row <= procTotal; row++ ) {
+		for ( int col = 0; col <= procTotal; col++ ) {
+			sprintf( buf, "| %3d %3d ", Pipes[ row ][ col ][ READ ], Pipes[ row ][ col ][ WRITE ] );
+			write( PipesLog, buf, strlen( buf ) );
+		}
+		write( PipesLog, "|\n", 2 );
+	}
+}
+
+
+void makeIPCLog( const char * const buf ) {
 	write( STDOUT_FILENO, buf, strlen( buf ) );
 	write( EventsLog, buf, strlen( buf ) );
-}
-
-
-void closeOtherPipes( const Process * const proc ) {
-	for ( int rowOrCol = PARENT_ID; rowOrCol <= proc -> total; rowOrCol++ ) {
-		if ( rowOrCol == proc -> localId ) continue;
-		close( Pipes[ proc -> localId ][ rowOrCol ][ WRITE ] );
-		close( Pipes[ rowOrCol ][ proc -> localId ][ READ ] );
-	}
-}
-
-// ================================================================================================
-
-void waitForBranches() {
-	int status;
-	pid_t pid;
-	while ( ( pid = wait( &status ) ) != -1 ) {
-		// printf( "Process %d has been done with exit code %d\n", pid, status );
-		if( WIFSIGNALED( status ) ) printf( "!!! Interrupted by signal %d !!!\n", WTERMSIG( status ) );
-	}
 }

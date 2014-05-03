@@ -36,12 +36,14 @@ int receive( void * self, local_id from, Message * msg ) {
 	// Read the header of the message (default size)
 	ssize_t wasRead = read( Pipes[ from ][ proc -> localId ][ READ ], &( msg -> s_header ), sizeof( MessageHeader ) );
 
-	// Actually, if ( wasRead == 0 ) there is no pipe at all (it was closed),
-	// but it doesn't matter for the caller function: it'll check the next outlet in any case
-	if ( ( wasRead == -1 && errno == EAGAIN ) || wasRead == 0 ) {
-		return IPC_PIPE_IS_EMPTY;
-	} else if( wasRead == -1) {
-		return IPC_FAILURE;
+	if( wasRead == -1 ) {
+		if( errno == EAGAIN ) {
+			return IPC_PIPE_IS_EMPTY;
+		} else {
+			return IPC_FAILURE;
+		}
+	} else if( wasRead == 0 ) {
+		return IPC_PIPE_IS_CLOSED;
 	}
 
 	// Read the rest part of the message which size has been known from the header
@@ -65,16 +67,9 @@ int receive_any( void * self, Message * msg ) {
 		status = receive( self, sender++, msg );
 
 		if( sender == proc -> localId ) sender++;
+		if( sender > proc -> total ) sender = PARENT_ID;
 
-		// i.e. it was the last try in the current cycle
-		if( sender > proc -> total ) {
-			sender = PARENT_ID;
-			if ( status == IPC_PIPE_IS_EMPTY ) {
-				// sleep( 1 );
-			}
-		}
-
-	} while ( status == IPC_PIPE_IS_EMPTY );
+	} while ( status == IPC_PIPE_IS_EMPTY || status == IPC_PIPE_IS_CLOSED );
 
 	return status;
 }
